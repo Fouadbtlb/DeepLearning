@@ -1,0 +1,50 @@
+---
+title: "R TP4-P1"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(party)
+library(MLmetrics)
+library(Metrics)
+```
+
+```{r}
+TheScore <- function(N){
+  avg=0
+  for (i in 1:N){
+    ind <-sample(2,nrow(iris),replace=TRUE,prob=c((N-1)/N,1/N))
+    train.data <- iris[ind==1,]
+    test.data <- iris[ind==2,]
+    myFormula <- Species ~ .;  
+    iris_ctree <-  ctree(myFormula,data=train.data,control = ctree_control( mincriterion = 0.7, minsplit = 20, minbucket = 30 ,maxsurrogate = 3, maxdepth = 4))
+    
+    print(iris_ctree)
+    plot(iris_ctree)
+    trainPred <- predict(iris_ctree,newdata=train.data)
+    print(table(trainPred,train.data$Species))
+    print(msle(as.numeric(trainPred),as.numeric(train.data$Species)))
+    
+    testPred <- predict(iris_ctree,newdata=test.data)
+    print(table(testPred,test.data$Species))
+    print(msle(as.numeric(testPred),as.numeric(test.data$Species)))
+    avg=avg+msle(as.numeric(testPred),as.numeric(test.data$Species))
+  }
+  print(avg/N)
+  
+}
+```
+
+```{r}
+TheScore(5)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.

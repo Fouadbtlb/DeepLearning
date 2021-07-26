@@ -1,0 +1,236 @@
+ ---
+title: "R Notebook"
+output: html_notebook
+---
+
+A regression problem where the goal is to estimate the return from a direct mailing in order to maximize donation profits.
+
+```{r}
+library(dplyr)
+library(readr)
+library(rccdates)
+library(party)
+library(MLmetrics)
+library(Metrics)
+```
+
+#import data
+```{r}
+train <- read.csv(file ="./data/cup98lrn.txt", header = TRUE, stringsAsFactors = TRUE, skipNul = TRUE)
+test <- read.csv(file ="./data/cup98val.txt", header = TRUE, stringsAsFactors = TRUE, skipNul = TRUE)
+dim(train)
+```
+
+
+
+
+
+
+There are a total of 481 features in the dataset, some of which are more relevant than others. For this project we extracted only a selection of variables that we judged would be better predictors of the response variable.
+
+```{r}
+sub <- c( "DOMAIN", "AGE", "HOMEOWNR","RECINHSE", "HIT", "MALEMILI",
+         "RFA_2F", "RFA_2A", "MDMAUD_R", "MDMAUD_F","CLUSTER2","INCOME","PETS","PEPSTRFL","PCOWNERS",
+         "CARDPROM","CARDPM12","RAMNTALL","NGIFTALL","MINRAMNT","MAXRAMNT","LASTGIFT","TIMELAG","AVGGIFT","NUMPRM12",
+         "HPHONE_D","GEOCODE2")
+train_TARGET_B=train[,"TARGET_B"]
+train_TARGET_D=train[,"TARGET_D"]
+train_sub=train[,sub]
+test_sub=test[,c(sub,"CONTROLN")]
+rm(train)
+rm(test)
+
+```
+
+
+
+* Each value in __DOMAIN__ is two characters. The first character describes whether the donor's neighborhood is urban, city, suburban, town or rural. The second character classifies the socio-economic status (SES) of the donor's neighborhood as highest, average or lowest. We split __DOMAIN__ into two separate variables __URBANICITY__ and __NBHOOD\_SES__.  City, suburban, town and rural areas all had 3 categories of SES, while urban areas had 4, replacing "average" with "above average" and "below average". In coding __NBHOOD\_SES__ we consider both as just "average". Missing values are given their own category, "not mentioned", in order to accommodate algorithms that won't run with missing values.   
+
+```{r}
+train_sub$URBANICITY[substr(train_sub$DOMAIN, 1, 1) == "U"] <- "Urban"
+train_sub$URBANICITY[substr(train_sub$DOMAIN, 1, 1) == "C"] <- "City"
+train_sub$URBANICITY[substr(train_sub$DOMAIN, 1, 1) == "S"] <- "Suburban"
+train_sub$URBANICITY[substr(train_sub$DOMAIN, 1, 1) == "T"] <- "Town"
+train_sub$URBANICITY[substr(train_sub$DOMAIN, 1, 1) == "R"] <- "Rural"
+train_sub$URBANICITY[train_sub$DOMAIN == " "] <- "Not mentioned"
+train_sub$URBANICITY <- as.factor(train_sub$URBANICITY)
+
+train_sub$NBHOOD_SES[substr(train_sub$DOMAIN, 2, 2) == "1"] <- "Highest SES"
+train_sub$NBHOOD_SES[substr(train_sub$DOMAIN, 2, 2) == "2"] <- "Average SES" 
+train_sub$NBHOOD_SES[substr(train_sub$DOMAIN, 2, 2) == "3" & substr(train_sub$DOMAIN, 1, 1) == "U"] <- "Average SES"
+train_sub$NBHOOD_SES[substr(train_sub$DOMAIN, 2, 2) == "3" & substr(train_sub$DOMAIN, 1, 1) != "U"] <- "Lowest SES"
+train_sub$NBHOOD_SES[substr(train_sub$DOMAIN, 2, 2) == "4"] <- "Lowest SES"
+train_sub$NBHOOD_SES[train_sub$DOMAIN == " "] <- "Not mentioned"
+train_sub$NBHOOD_SES <- as.factor(train_sub$NBHOOD_SES)
+train_sub = subset(train_sub,select=-c(DOMAIN))
+summary(train_sub$URBANICITY)
+summary(train_sub$NBHOOD_SES)
+```
+
+
+```{r}
+test_sub$URBANICITY[substr(test_sub$DOMAIN, 1, 1) == "U"] <- "Urban"
+test_sub$URBANICITY[substr(test_sub$DOMAIN, 1, 1) == "C"] <- "City"
+test_sub$URBANICITY[substr(test_sub$DOMAIN, 1, 1) == "S"] <- "Suburban"
+test_sub$URBANICITY[substr(test_sub$DOMAIN, 1, 1) == "T"] <- "Town"
+test_sub$URBANICITY[substr(test_sub$DOMAIN, 1, 1) == "R"] <- "Rural"
+test_sub$URBANICITY[test_sub$DOMAIN == " "] <- "Not mentioned"
+test_sub$URBANICITY <- as.factor(test_sub$URBANICITY)
+
+test_sub$NBHOOD_SES[substr(test_sub$DOMAIN, 2, 2) == "1"] <- "Highest SES"
+test_sub$NBHOOD_SES[substr(test_sub$DOMAIN, 2, 2) == "2"] <- "Average SES" 
+test_sub$NBHOOD_SES[substr(test_sub$DOMAIN, 2, 2) == "3" & substr(test_sub$DOMAIN, 1, 1) == "U"] <- "Average SES"
+test_sub$NBHOOD_SES[substr(test_sub$DOMAIN, 2, 2) == "3" & substr(test_sub$DOMAIN, 1, 1) != "U"] <- "Lowest SES"
+test_sub$NBHOOD_SES[substr(test_sub$DOMAIN, 2, 2) == "4"] <- "Lowest SES"
+test_sub$NBHOOD_SES[test_sub$DOMAIN == " "] <- "Not mentioned"
+test_sub$NBHOOD_SES <- as.factor(test_sub$NBHOOD_SES)
+test_sub = subset(test_sub,select=-c(DOMAIN))
+summary(test_sub$URBANICITY)
+summary(test_sub$NBHOOD_SES)
+```
+
+
+* __AGE__ ranges from 1 to 98, with a median of 62 and 2,465 missing values. Comparing TARGET\_B between those with age values and those without, it doesn't seem like a systematic difference is present, so we can leave __AGE__ as is for now.   
+```{r}
+summary(train_sub$AGE)
+```
+* __HOMEOWNR__ is "H" if the donor is a known homeowner, "U" if unknown, and then there are 2,329 missing values. We recode this int __HOMEOWNR\_BIN__ which is 1 if the donor is a known homeowner and 0 otherwise.
+
+```{r}
+train_sub$HOMEOWNR_BIN[train_sub$HOMEOWNR == "H"] <- 1
+train_sub$HOMEOWNR_BIN[train_sub$HOMEOWNR == "U"] <- 0
+train_sub$HOMEOWNR_BIN[train_sub$HOMEOWNR == " "] <- 0
+train_sub$HOMEOWNR_BIN <- as.factor(train_sub$HOMEOWNR_BIN)
+train_sub = subset(train_sub,select=-c(HOMEOWNR))
+summary(train_sub$HOMEOWNR_BIN)
+```
+
+```{r}
+test_sub$HOMEOWNR_BIN[test_sub$HOMEOWNR == "H"] <- 1
+test_sub$HOMEOWNR_BIN[test_sub$HOMEOWNR == "U"] <- 0
+test_sub$HOMEOWNR_BIN[test_sub$HOMEOWNR == " "] <- 0
+test_sub$HOMEOWNR_BIN <- as.factor(test_sub$HOMEOWNR_BIN)
+test_sub = subset(test_sub,select=-c(HOMEOWNR))
+summary(test_sub$HOMEOWNR_BIN)
+```
+
+$
+
+* __HIT__ indicates the total number of known times the donor has responded to a mail order offer other than PVA's. For some reason, there are an unusually high number of observations with the value of 240, but there isn't any indication in the data's documentation what significance 240 might have. The next lowest value after 240 is 84.
+
+```{r}
+summary(train_sub$HIT)
+```
+
+
+* __NUMPRM12__ is the number of promotions that a donor received between March 1996 and February 1997. The median is 12 promotions, or around one per month, and most values range from 7 to 15. but the full range of values is from 1 to 47.  
+```{r}
+summary(train_sub$NUMPRM12)
+```
+
+* __CARDGIFT__ is the number of gifts that a donor has ever made to a promotion over their lifetime. The median is 4 and the mode is 1. The values range from 0 to 41. This does not include unsolicited donations - there are 520 donors who have never given solicited donations, but have donated in some other fashion. (As previously stated, everyone in the dataset has donated at least once.)  
+
+```{r}
+summary(train_sub$CARDGIFT)
+```
+
+* __TIMELAG__ is the number of months between a donor's first and second donation. There are three observations with nonsense values (e.g. 1044 months), which we will treat as missing. Including those three, there are 1020 missing values. The median is 6 months.
+
+```{r}
+summary(train_sub$TIMELAG)
+train_sub$TIMELAG[train_sub$TIMELAG > 400] <- NA
+```
+
+* __AVGGIFT__ is the average dollar amount of all donations from each donor to date. The mean is 13.45 and the median is 11.5, but there are quite a few larger gifts.
+```{r}
+summary(train_sub$AVGGIFT)
+```
+
+* __LASTGIFT__ is the dollar amount of the most recent donation made by a donor. The mean is 17.42 and the median is 15.00.
+
+```{r}
+summary(train_sub$LASTGIFT)
+```
+
+* __RFA\_2R__, __RFA\_2F__, __RFA\_2A__, and __RFA\_3__ are "recency, frequency, amount" variables common in direct marketing. These variables range from __RFA\_2__ to __RFA\_24__ in the data, where each number refers to a particular promotion, in reverse date order (i.e. __RFA\_2__ is the most recent promotion, June 1997, and __RFA\_24__ is the earliest promotion, May-June 1994). Each category in an RFA variable consists of three characters. The first character is the donor's recency status (first-time, active, inactive, etc), the second is how many donations they gave within the last 12 months (or less) that they were active, and the third character categorizes the amount of their most recent gift as of the date of that promotion. Note that since this dataset only gathers people who have not donated anything between June 1996 and June 1997, the recency (R) status of every single person in the dataset for promotion 2 is L (Lapsed): 
+
+```{r}
+table(train_sub$RFA_2F)
+```
+
+*  __PEPSTRFL__ indicates PEP Star RFA Status. We're not actually sure what this means, but it seems to indicate a type of priority donor.  
+```{r}
+table(train_sub$PEPSTRFL)
+```
+
+
+* __MDMAUD\_R__, __MDMAUD\_F__, and __MDMAUD\_A__ are the recency, frequency, and amount variables for major donors. These are coded differently from the other RFA variables. Recency is coded as C for Current Donor, L for Lapsed, I for Inactive and D for Dormant; frequency is coded as 1 for one gift, 2 for two-four gifts and 5 for five+ gifts; amount is coded as L for "low dollar", C for "core", M for "major" and T for "top".  
+
+```{r}
+table(train_sub$MDMAUD_R)
+table(train_sub$MDMAUD_F)
+```
+
+Finally, we make the response variable a factor and then resplit into training and testing data.
+
+
+
+
+```{r}
+train_sub_d=cbind(train_sub,TARGET_D=train_TARGET_D)
+
+myFormula <- TARGET_D ~ .
+
+best=0
+for (i in 1:10){
+  ind <- sample(2, nrow(train_sub_d), replace=TRUE, prob=c(0.8, 0.2))
+  trainData <- train_sub_d[ind==1,]
+  testData <- train_sub_d[ind==2,]
+  testData <- subset(testData,select=-c(TARGET_D))
+  my_ctree_d <- ctree(myFormula,data=trainData,control = ctree_control(minbucket = 400 ,maxdepth=10,minsplit=1000))
+  predict_d=sum(predict(my_ctree_d,testData))
+  if (predict_d > best ){
+    best =predict_d
+    best_tree=my_ctree_d
+  }
+
+}
+
+plot(best_tree,type="simple")
+print(best)
+
+```
+
+we read the valtargt file wich containes the result of our testing file 
+```{r}
+test_target <- read.csv(file ="./data/valtargt.txt", header = TRUE, stringsAsFactors = TRUE, skipNul = TRUE)
+```
+we don't need TARGET_B so we remove it
+```{r}
+test_target = subset(test_target,select=-c(TARGET_B))
+```
+
+we the 2 tables using  CONTROLN and predict value
+```{r}
+test_target_sub=left_join(test_sub, test_target, by = c("CONTROLN"))
+predicted_val=predict(my_ctree_d,test_target_sub)
+```
+
+now we can compare with predicted values with actual values 
+```{r}
+abs(mean(predicted_val-test_target_sub$TARGET_D))
+```
+as we see in the scoring our ctree is so close to the right answer, we have an error of 0.0003e per prediction , a number that we can ignore 
+
+
+
+
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+  

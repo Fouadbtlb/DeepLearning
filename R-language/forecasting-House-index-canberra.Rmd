@@ -1,0 +1,97 @@
+---
+title: "TP4 part 3"
+output: html_notebook
+---
+
+
+
+```{r}
+library(dplyr)
+library(readr)
+library(forecast)
+```
+---
+Importing HPI Data
+---
+first we import data , dates are imported as string so we transforme them to dates
+```{r}
+hic <- read.csv(file = "./data/House-index-canberra.csv")
+titre <- c('date','valeur')
+colnames(hic) <- titre
+Sys.setlocale("LC_TIME", "C")
+hic$date <- as.Date(hic$date, "%d-%b-%y")
+```
+
+we plot the evolution of index over time
+
+```{r}
+plot(hic,type='l')
+```
+
+---
+Exploration of HPI Data
+---
+```{r}
+summary(hic)
+```
+
+
+---
+rend and Seasonal Components of HPI
+---
+```{r}
+apts<- ts(hic$valeur,start = c(1990,2),end = c(2011,1),frequency = 12)
+f <- stats::decompose(apts)
+monthNames <- months(ISOdate(2011,1:12,1))
+```
+
+```{r}
+plot(f$figure, type="b", xaxt="n", xlab="")
+axis(1, at=1:12, labels=monthNames, las=2)
+```
+
+
+
+
+---
+seasonal plots
+----
+```{r}
+plot(f)
+```
+
+---
+Forcasting
+---
+```{r}
+fit <- arima(apts,order=c(1,0,0), list(order=c(2,1,0), period=12))
+summary(fit)
+```
+
+
+```{r}
+fore <- predict(fit, n.ahead=24)
+U <- fore$pred + 2*fore$se
+L <- fore$pred - 2*fore$se
+ts.plot(apts, fore$pred, U, L, col=c(1,2,4,4), lty = c(1,1,2,2))
+legend("topleft", c("Actual", "Forecast", "Error Bounds (95% Confidence)"),col=c(1,2,4), lty=c(1,1,2))
+```
+
+```{r}
+estimated <- function(prix,mois_annee,mois_nouvelle_annee){
+  a = as.Date(paste("01-",mois_annee),"%d-%m-%Y")
+  b= a+30
+  c= as.Date(paste("01-",mois_nouvelle_annee),"%d-%m-%Y")
+  d=c+30
+  f<-hic[hic$date >=a & hic$date <= b,]
+  old_val <- f$valeur
+  nb_mois=((c-max(hic$date))/30)+1
+  index_in_nb_years=predict(fit,nb_mois)
+  new_val=max(index_in_nb_years$pred)
+  nouveau_prix=(prix/old_val)*new_val
+  return(nouveau_prix)
+}
+
+estimated(500000,"01-2009","03-2012")
+```
+
